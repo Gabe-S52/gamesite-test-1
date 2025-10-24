@@ -1,0 +1,302 @@
+import pygame, math, random
+
+pygame.init()
+
+# --- Settings ---
+WIDTH, HEIGHT = 668, 492
+FPS = 60
+WIN = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Mini Clash Royale")
+
+# --- Colors ---
+WHITE = (255, 255, 255)
+GREY = (150, 150, 150)
+BLUE = (60, 120, 255)
+RED = (220, 60, 60)
+GREEN = (0, 200, 0)
+PURPLE = (160, 50, 255)
+BLACK = (0, 0, 0)
+YELLOW = (250, 250, 100)
+BROWN = (180, 100, 50)
+
+# --- Game constants ---
+LANE_TOP_Y = 150
+LANE_BOTTOM_Y = 340
+ELIXIR_MAX = 10
+ELIXIR_REGEN = 0.015
+CARD_SIZE = (70, 80)
+
+# Lane paths
+LANE_TOP = [(120, LANE_TOP_Y), (300, LANE_TOP_Y), (WIDTH - 120, LANE_TOP_Y)]
+LANE_BOTTOM = [(120, LANE_BOTTOM_Y), (300, LANE_BOTTOM_Y), (WIDTH - 120, LANE_BOTTOM_Y)]
+LANES = [LANE_TOP, LANE_BOTTOM]
+
+
+# ---------- CLASSES ----------
+class Tower:
+    def __init__(self, x, y, hp, is_main=False, owner="player"):
+        self.x, self.y = x, y
+        self.hp = hp
+        self.is_main = is_main
+        self.owner = owner
+        self.range = 200 if is_main else 130
+        self.damage = 2.5 if is_main else 2
+        self.cooldown = 0
+        self.cooldown_max = 50
+
+    def draw(self, win):
+        base_color = BLUE if self.owner == "player" else RED
+        pygame.draw.rect(win, base_color, (self.x - 20, self.y - 40, 40, 80))
+        pygame.draw.rect(win, GREY, (self.x - 20, self.y - 48, 40, 6))
+        hp_width = 40 * max(self.hp, 0) / 100
+        pygame.draw.rect(win, GREEN, (self.x - 20, self.y - 48, hp_width, 6))
+
+    def find_target(self, enemies):
+        for e in enemies:
+            if math.dist((self.x, self.y), (e.x, e.y)) < self.range:
+                return e
+        return None
+
+    def attack(self, enemies):
+        if self.cooldown > 0:
+            self.cooldown -= 1
+            return None
+        target = self.find_target(enemies)
+        if target:
+            target.hp -= self.damage
+            self.cooldown = self.cooldown_max
+
+
+class Troop:
+    def __init__(self, x, y, hp, dmg, speed, owner, lane_path, color):
+        self.x, self.y = x, y
+        self.hp = hp
+        self.dmg = dmg
+        self.speed = speed
+        self.owner = owner
+        self.path = lane_path.copy()
+        if owner == "ai":
+            self.path.reverse()
+        self.color = color
+        self.attack_range = 20
+        self.cooldown = 0
+
+    def draw(self, win):
+        pygame.draw.circle(win, self.color, (int(self.x), int(self.y)), 9)
+        pygame.draw.rect(win, GREY, (self.x - 10, self.y - 16, 20, 3))
+        hp_ratio = max(self.hp, 0) / 30
+        pygame.draw.rect(win, GREEN, (self.x - 10, self.y - 16, 20 * hp_ratio, 3))
+
+    def move(self):
+        if not self.path:
+            return
+        tx, ty = self.path[0]
+        dx, dy = tx - self.x, ty - self.y
+        dist = math.hypot(dx, dy)
+        if dist < 5:
+            self.path.pop(0)
+        else:
+            self.x += self.speed * dx / dist
+            self.y += self.speed * dy / dist
+
+    def attack(self, enemies):
+        if self.cooldown > 0:
+            self.cooldown -= 1
+            return False
+        for e in enemies:
+            if math.dist((self.x, self.y), (e.x, e.y)) < self.attack_range:
+                e.hp -= self.dmg
+                self.cooldown = 30
+                return True
+        return False
+
+
+class GoblinBarrel:
+    def __init__(self, x, y, target_towers, player_troops, lane_path):
+        self.x, self.y = x, y
+        self.timer = 60
+        self.done = False
+        self.target_towers = target_towers
+        self.player_troops = player_troops
+        self.lane_path = lane_path
+
+    def update(self):
+        if self.done:
+            return
+        self.timer -= 1
+        if self.timer <= 0:
+            # Small splash
+            for tower in self.target_towers:
+                if math.dist((self.x, self.y), (tower.x, tower.y)) < 50:
+                    tower.hp -= 15
+            # Spawn goblins
+            for _ in range(3):
+                self.player_troops.append(
+                    Troop(self.x + random.randint(-10, 10),
+                          self.y + random.randint(-10, 10),
+                          15, 2, 1.3, "player", self.lane_path, GREEN)
+                )
+            self.done = True
+
+    def draw(self, win):
+        if not self.done:
+            pygame.draw.circle(win, YELLOW, (int(self.x), int(self.y)), 10)
+            pygame.draw.circle(win, ORANGE, (int(self.x), int(self.y)), 10, 2)
+
+
+class Card:
+    def __init__(self, name, cost):
+        self.name = name
+        self.cost = cost
+        self.rect = pygame.Rect(0, 0, *CARD_SIZE)
+
+
+class Player:
+    def __init__(self):
+        self.elixir = 5
+        self.cards = [
+            Card("Knight", 4),
+            Card("Goblin Barrel", 3),
+            Card("Cannon", 5)
+        ]
+
+
+# ---------- Setup ----------
+player = Player()
+
+player_towers = [
+    Tower(100, LANE_TOP_Y, 60, False, "player"),
+    Tower(100, LANE_BOTTOM_Y, 60, False, "player"),
+    Tower(70, HEIGHT // 2, 100, True, "player")
+]
+ai_towers = [
+    Tower(WIDTH - 100, LANE_TOP_Y, 60, False, "ai"),
+    Tower(WIDTH - 100, LANE_BOTTOM_Y, 60, False, "ai"),
+    Tower(WIDTH - 70, HEIGHT // 2, 100, True, "ai")
+]
+
+player_troops, ai_troops = [], []
+barrels = []
+clock = pygame.time.Clock()
+running = True
+selected_card = None
+dragging = False
+frame_count = 0
+
+
+# ---------- Main Loop ----------
+while running:
+    dt = clock.tick(FPS)
+    WIN.fill((230, 230, 230))
+
+    # Lanes
+    pygame.draw.lines(WIN, (200, 200, 200), False, LANE_TOP, 3)
+    pygame.draw.lines(WIN, (200, 200, 200), False, LANE_BOTTOM, 3)
+
+    # Elixir regen
+    if player.elixir < ELIXIR_MAX:
+        player.elixir += ELIXIR_REGEN
+
+    # Tower attacks
+    for t in player_towers:
+        t.attack(ai_troops)
+    for t in ai_towers:
+        t.attack(player_troops)
+
+    # Barrel updates
+    for b in barrels:
+        b.update()
+    barrels = [b for b in barrels if not b.done]
+
+    # Troop updates
+    for troop in player_troops:
+        troop.move()
+        if not troop.attack(ai_troops) and not troop.attack(ai_towers):
+            troop.move()
+    for troop in ai_troops:
+        troop.move()
+        if not troop.attack(player_troops) and not troop.attack(player_towers):
+            troop.move()
+
+    # Cleanup
+    player_troops = [t for t in player_troops if t.hp > 0]
+    ai_troops = [t for t in ai_troops if t.hp > 0]
+    player_towers = [t for t in player_towers if t.hp > 0]
+    ai_towers = [t for t in ai_towers if t.hp > 0]
+
+    # Win/Loss
+    player_main_alive = any(t.is_main for t in player_towers)
+    ai_main_alive = any(t.is_main for t in ai_towers)
+    if not ai_main_alive:
+        WIN.fill(GREEN)
+        font = pygame.font.SysFont(None, 70)
+        WIN.blit(font.render("YOU WIN!", True, WHITE), (WIDTH // 2 - 150, HEIGHT // 2 - 50))
+        pygame.display.update()
+        pygame.time.delay(2500)
+        break
+    if not player_main_alive:
+        WIN.fill(RED)
+        font = pygame.font.SysFont(None, 70)
+        WIN.blit(font.render("YOU LOSE!", True, WHITE), (WIDTH // 2 - 150, HEIGHT // 2 - 50))
+        pygame.display.update()
+        pygame.time.delay(2500)
+        break
+
+    # --- Draw everything ---
+    for t in player_towers + ai_towers:
+        t.draw(WIN)
+    for troop in player_troops + ai_troops:
+        troop.draw(WIN)
+    for b in barrels:
+        b.draw(WIN)
+
+    # --- AI spawns ---
+    frame_count += 1
+    if frame_count % 280 == 0:
+        lane_path = random.choice(LANES)
+        ai_troops.append(Troop(WIDTH - 120, lane_path[-1][1], 25, 2, 1, "ai", lane_path, RED))
+
+    # --- Bottom UI bar ---
+    pygame.draw.rect(WIN, GREY, (0, HEIGHT - 100, WIDTH, 100))
+    x_offset = 40
+    for card in player.cards:
+        rect = pygame.Rect(x_offset, HEIGHT - 90, *CARD_SIZE)
+        pygame.draw.rect(WIN, BLUE, rect)
+        font = pygame.font.SysFont(None, 24)
+        WIN.blit(font.render(f"{card.name}", True, WHITE), (rect.x + 5, rect.y + 25))
+        WIN.blit(font.render(f"{card.cost}", True, WHITE), (rect.x + 25, rect.y + 55))
+        card.rect = rect
+        x_offset += CARD_SIZE[0] + 20
+
+    # Elixir bar
+    pygame.draw.rect(WIN, BLACK, (WIDTH // 2 - 100, HEIGHT - 30, 200, 15))
+    pygame.draw.rect(WIN, PURPLE, (WIDTH // 2 - 100, HEIGHT - 30, 20 * player.elixir, 15))
+
+    # --- Input ---
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            for card in player.cards:
+                if card.rect.collidepoint(event.pos) and player.elixir >= card.cost:
+                    selected_card = card
+                    dragging = True
+
+        elif event.type == pygame.MOUSEBUTTONUP and dragging:
+            mx, my = event.pos
+            if mx < WIDTH / 2:
+                lane_path = LANE_TOP if abs(my - LANE_TOP_Y) < abs(my - LANE_BOTTOM_Y) else LANE_BOTTOM
+                if selected_card.name == "Knight":
+                    player_troops.append(Troop(mx, lane_path[0][1], 30, 3, 1, "player", lane_path, BLUE))
+                elif selected_card.name == "Goblin Barrel":
+                    barrels.append(GoblinBarrel(mx, lane_path[0][1], ai_towers, player_troops, lane_path))
+                elif selected_card.name == "Cannon":
+                    player_troops.append(Troop(mx, lane_path[0][1], 40, 3, 0, "player", lane_path, BROWN))
+                player.elixir -= selected_card.cost
+            dragging = False
+            selected_card = None
+
+    pygame.display.update()
+
+pygame.quit()
