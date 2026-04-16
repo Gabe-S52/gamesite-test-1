@@ -1,0 +1,1 @@
+In this wannabe website, I have a few games that are fun for a lot of people, such as ULTRAKILL, Minecraft (Eagler), and off brand clash royale that I'm still working on and coding and Ragdoll Hit. In my opinion, these are fun games overall and many people enjoy them. I'll add a website for a google document so you can add comments on what to add soon.
